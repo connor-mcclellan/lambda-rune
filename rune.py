@@ -1,22 +1,24 @@
 import numpy as np
-from util import parse
+from util import parse, flatten
 import pdb
 # PRED := λn.λf.λx.n (λg.λh.h (g f)) (λu.x) (λu.u)
 # Lnfx.n Lgh.h(gf) Lu.x Lu.u
 
 
 class NodeRing(object):
-    def __init__(self, cx, cy, r, expression, offset=False, start_ang=0.):
+    def __init__(self, cx, cy, r, expression, offset=False, start_ang=0., max_nested_r=None):
         self.cx = cx
         self.cy = cy
         self.r = r
         self.expression = expression
         self.offset = offset
         self.start_ang = start_ang
+        self.max_nested_r = max_nested_r
         self.nodes = []
         self.parseExpression()
         self.links = []
         self.parentheses = []
+
 
     def parseExpression(self):
         # Parse text in expression
@@ -53,6 +55,28 @@ class NodeRing(object):
         return self.links
 
 
+class Head(NodeRing):
+    def draw(self, svg):
+        svg.Circ(self.cx, self.cy, self.r, 3) # Head circ
+        if len(self.nodes) == 2:
+            svg.Circ(self.nodes[1].cx, self.nodes[1].cy, 2, 4)
+        else:
+            svg.Poly(self.nodes, 1) # Inscribed polygon
+        svg.Circ(self.nodes[0].cx, self.nodes[0].cy, 10, 3) # Start node circ
+
+
+class Body(NodeRing):
+    def __init__(self, cx, cy, r, expression, **kwargs):
+        super().__init__(cx, cy, r, expression, **kwargs)
+        self.parseParentheses()
+
+    def draw(self, svg):
+        svg.Circ(self.cx, self.cy, self.r, 3) # Body circ
+        if len(self.nodes) == 1:
+            svg.Circ(self.nodes[0].cx, self.nodes[0].cy, 2, 4)
+        svg.Poly(self.nodes, 1) # Inscribed polygon
+
+
 class Node(object):
     def __init__(self, th, r, parent, expression):
         self.th = th
@@ -74,7 +98,13 @@ class Node(object):
         if type(self.expression) == str:
             self.content = None
         else:
-            self.content = Rune(self.cx, self.cy, self.r/2, self.expression, start_ang=self.th+np.pi/2)
+            node_complexity = len(list(flatten(self.expression)))
+            parent_complexity = len(list(flatten(self.parent.expression)))
+            # Set a maximum size based on available room inside rune
+            size = self.r * node_complexity / parent_complexity
+            if self.parent.max_nested_r is not None:
+                size = min(size, self.parent.max_nested_r) - 0.075 * self.r
+            self.content = Rune(self.cx, self.cy, size, self.expression, start_ang=self.th+np.pi/2)
 
     def draw(self, svg):
         if self.content == None:
@@ -91,28 +121,6 @@ class GhostNode(Node):
         self.calculateXY()
 
 
-class Head(NodeRing):
-    def draw(self, svg):
-        svg.Circ(self.cx, self.cy, self.r, 3) # Head circ
-        if len(self.nodes) == 2:
-            svg.Circ(self.nodes[1].cx, self.nodes[1].cy, 2.5, 5)
-        else:
-            svg.Poly(self.nodes, 1) # Inscribed polygon
-        svg.Circ(self.nodes[0].cx, self.nodes[0].cy, 10, 3) # Start node circ
-
-
-class Body(NodeRing):
-    def __init__(self, cx, cy, r, expression, start_ang=0.):
-        NodeRing.__init__(self, cx, cy, r, expression, offset=True, start_ang=start_ang)
-        self.parseParentheses()
-
-    def draw(self, svg):
-        svg.Circ(self.cx, self.cy, self.r, 3) # Body circ
-        if len(self.nodes) == 1:
-            svg.Circ(self.nodes[0].cx, self.nodes[0].cy, 2.5, 5)
-        svg.Poly(self.nodes, 1) # Inscribed polygon
-
-
 class Rune(object):
     def __init__(self, cx, cy, r, expression, start_ang=0.):
         self.cx = cx
@@ -123,10 +131,10 @@ class Rune(object):
 
         self.head = Head(self.cx, self.cy, self.r, self.expression[0], start_ang=self.start_ang)
         if len(self.head.nodes) <= 2:
-            apothem = 0.7*self.r
+            apothem = 0.6*self.r
         else:
-            apothem = self.r * np.cos(np.pi / len(self.head.nodes))/1.25
-        self.body = Body(self.cx, self.cy, apothem, self.expression[1], start_ang=self.start_ang)
+            apothem = self.r * np.cos(np.pi / len(self.head.nodes))
+        self.body = Body(self.cx, self.cy, apothem, self.expression[1], start_ang=self.start_ang, max_nested_r=self.r-apothem, offset=True)
 
         self.head.linkToOther(self.body)
         for node in self.body.nodes:
@@ -168,7 +176,7 @@ if __name__ == "__main__":
 
     # Create SVG canvas, render rune, write out the file
     svg = SVG(args.outfile, 800, 800)
-    rune = Rune(400, 400, 250, parse(args.expression))
+    rune = Rune(400, 400, 350, parse(args.expression))
     rune.draw(svg)
     svg.write()
 
